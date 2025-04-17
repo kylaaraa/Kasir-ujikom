@@ -13,44 +13,49 @@ class DashboardController extends Controller
     public function index()
     {
         $user = Auth::user();
-        //Mengambil data user yang sedang login.
         $totalPenjualan = null;
         $chartData = [];
-        //Ini untuk grafik bar (batang) yang menampilkan jumlah produk yang terjual tiap hari selama 7 hari terakhir.
         $totalPerProduk = [];
-        //Ini untuk grafik pie (lingkaran) yang menampilkan total penjualan tiap produk secara keseluruhan.
+        $stokPerProduk = [];
+        $memberStats = [];
 
         if ($user->role === 'petugas') {
             $totalPenjualan = Purchase::whereDate('created_at', Carbon::today())->count();
         }
 
         if ($user->role === 'admin') {
-            // Data untuk grafik bar (penjualan per tanggal dan produk 7 hari terakhir)
-            $salesPerDayRaw = DB::table('purchase_product') 
+            // Chart Pie: Stok Produk
+            $stokPerProduk = DB::table('products')
+                ->select('nama_produk', 'stok')
+                ->pluck('stok', 'nama_produk')
+                ->toArray();
+
+            // Bar Chart: Jumlah transaksi member vs non-member
+            $jumlahTransaksiMember = Purchase::whereNotNull('member_id')
+                ->distinct('member_id')
+                ->count('member_id');
+
+            $jumlahTransaksiNonMember = Purchase::whereNull('member_id')->count();
+
+            $memberStats = [
+                'Member' => $jumlahTransaksiMember,
+                'Non-Member' => $jumlahTransaksiNonMember,
+            ];
+
+            // Grafik bar (jumlah total produk terjual selama 7 hari terakhir)
+            $chartData = DB::table('purchase_product')
                 ->join('purchases', 'purchase_product.purchase_id', '=', 'purchases.id')
-                ->join('products', 'purchase_product.product_id', '=', 'products.id')
-                ->select(
-                    DB::raw('DATE(purchases.created_at) as tanggal'),
-                    'products.nama_produk',
-                    DB::raw('SUM(purchase_product.quantity) as total')
-                )
+                ->select(DB::raw('SUM(purchase_product.quantity) as total'))
                 ->whereDate('purchases.created_at', '>=', Carbon::now()->subDays(6)->toDateString())
-                ->groupBy('tanggal', 'products.nama_produk')
-                ->orderBy('tanggal')
-                ->distinct() // Menghindari duplikasi data
                 ->get()
-                ->groupBy('tanggal');
+                ->map(function ($item) {
+                    return [
+                        'total' => $item->total,
+                    ];
+                })
+                ->toArray();
 
-
-            foreach ($salesPerDayRaw as $tanggal => $items) {
-                $entry = ['tanggal' => $tanggal];
-                foreach ($items as $item) {
-                    $entry[$item->nama_produk] = $item->total;
-                }
-                $chartData[] = $entry;
-            }
-
-            // Data untuk grafik pie (total penjualan per produk)
+            // Grafik pie: total penjualan per produk
             $totalPerProduk = DB::table('purchase_product')
                 ->join('products', 'purchase_product.product_id', '=', 'products.id')
                 ->select('products.nama_produk', DB::raw('SUM(purchase_product.quantity) as total'))
@@ -59,6 +64,13 @@ class DashboardController extends Controller
                 ->toArray();
         }
 
-        return view('dashboard', compact('user', 'totalPenjualan', 'chartData', 'totalPerProduk'));
+        return view('dashboard', compact(
+            'user',
+            'totalPenjualan',
+            'chartData',
+            'totalPerProduk',
+            'stokPerProduk',
+            'memberStats'
+        ));
     }
 }
